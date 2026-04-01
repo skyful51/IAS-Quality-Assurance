@@ -1,3 +1,5 @@
+import os
+from PIL import Image
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -83,5 +85,10 @@ if __name__ == "__main__":
         os.makedirs(os.path.join(args.data_path, "crack"), exist_ok=True)
         os.makedirs(os.path.join(args.data_path, "scratch"), exist_ok=True)
 
-    import os
+        dummy_img = Image.new('RGB', (args.img_size, args.img_size), color = 'red')
+        for i in range(10):
+            dummy_img.save(os.path.join(args.data_path, "good", f"img_{i:03d}.png"))
+            dummy_img.save(os.path.join(args.data_path, "crack", f"img_{i:03d}.png"))
+            dummy_img.save(os.path.join(args.data_path, "scratch", f"img_{i:03d}.png"))
+
     train(args)
