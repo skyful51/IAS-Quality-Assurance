@@ -79,16 +79,16 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     # Simple check for path
-    if not os.path.exists(args.data_path):
-        print(f"Creating dummy data structure at {args.data_path} for demonstration.")
-        os.makedirs(os.path.join(args.data_path, "good"), exist_ok=True)
-        os.makedirs(os.path.join(args.data_path, "crack"), exist_ok=True)
-        os.makedirs(os.path.join(args.data_path, "scratch"), exist_ok=True)
+    # if not os.path.exists(args.data_path):
+    #     print(f"Creating dummy data structure at {args.data_path} for demonstration.")
+    #     os.makedirs(os.path.join(args.data_path, "good"), exist_ok=True)
+    #     os.makedirs(os.path.join(args.data_path, "crack"), exist_ok=True)
+    #     os.makedirs(os.path.join(args.data_path, "scratch"), exist_ok=True)
 
-        dummy_img = Image.new('RGB', (args.img_size, args.img_size), color = 'red')
-        for i in range(10):
-            dummy_img.save(os.path.join(args.data_path, "good", f"img_{i:03d}.png"))
-            dummy_img.save(os.path.join(args.data_path, "crack", f"img_{i:03d}.png"))
-            dummy_img.save(os.path.join(args.data_path, "scratch", f"img_{i:03d}.png"))
+    #     dummy_img = Image.new('RGB', (args.img_size, args.img_size), color = 'red')
+    #     for i in range(10):
+    #         dummy_img.save(os.path.join(args.data_path, "good", f"img_{i:03d}.png"))
+    #         dummy_img.save(os.path.join(args.data_path, "crack", f"img_{i:03d}.png"))
+    #         dummy_img.save(os.path.join(args.data_path, "scratch", f"img_{i:03d}.png"))
 
     train(args)
