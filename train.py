@@ -1,21 +1,29 @@
-import os
-from PIL import Image
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from data.dataset import get_dataloader
 from models.backbone import ResNetBackbone
 from models.heads import ArcMarginProduct
+from utils.visualize import visualize_embeddings
 import argparse
+import os
+from datetime import datetime
 
 def train(args):
+    # Setup Experiment Folder
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    exp_name = f"run_{args.data_path.split('/')[-1]}_{args.backbone}_{timestamp}"
+    log_dir = os.path.join("logs", exp_name)
+    os.makedirs(log_dir, exist_ok=True)
+    print(f"Experiment Directory: {log_dir}")
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
 
     # 1. Dataset & DataLoader (Step 1)
     dataloader = get_dataloader(args.data_path, args.batch_size, args.img_size)
     num_classes = len(dataloader.dataset.classes)
-    print(f"Loaded {num_classes} classes from {args.data_path}")
+    print(f"Loaded {num_classes} classes from {args.data_path}: {dataloader.dataset.classes}")
 
     # 2. Model Initialization (Step 2 & 3)
     backbone = ResNetBackbone(model_name=args.backbone, pretrained=True).to(device)
@@ -30,20 +38,17 @@ def train(args):
 
     print("Starting Training...")
     
-    backbone.train()
-    head.train()
-
     for epoch in range(args.epochs):
+        backbone.train()
+        head.train()
         total_loss = 0
         for i, (images, labels) in enumerate(dataloader):
             images, labels = images.to(device), labels.to(device)
 
             # Step 2: Backbone Embedding Extraction
-            # Input: [B, 3, 224, 224] -> Output: [B, 512]
             embeddings = backbone(images)
 
             # Step 3 & 4: Head Pass & Margin Application
-            # Logits are calculated with margin applied to target class internally
             logits = head(embeddings, labels)
 
             # Step 4: Loss Calculation
@@ -62,14 +67,18 @@ def train(args):
         avg_loss = total_loss / len(dataloader)
         print(f"Epoch [{epoch+1}/{args.epochs}] Average Loss: {avg_loss:.4f}")
 
-    # Save Checkpoints
-    torch.save(backbone.state_dict(), "backbone_final.pth")
-    torch.save(head.state_dict(), "head_final.pth")
-    print("Training Finished and Models Saved.")
+    # 5. Visualization & Saving
+    print("Training finished. Generating final visualization...")
+    visualize_embeddings(backbone, dataloader, device, log_dir, args.epochs)
+
+    # Save Checkpoints in Log Dir
+    torch.save(backbone.state_dict(), os.path.join(log_dir, "backbone_final.pth"))
+    torch.save(head.state_dict(), os.path.join(log_dir, "head_final.pth"))
+    print(f"Models and visualization saved in: {log_dir}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data_path', type=str, default='data/mvtec_toy', help='Path to dataset')
+    parser.add_argument('--data_path', type=str, required=True, help='Path to MVTec category (e.g. data/bottle)')
     parser.add_argument('--backbone', type=str, default='resnet18', help='resnet18 or resnet50')
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--img_size', type=int, default=224)
@@ -78,17 +87,7 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    # Simple check for path
-    # if not os.path.exists(args.data_path):
-    #     print(f"Creating dummy data structure at {args.data_path} for demonstration.")
-    #     os.makedirs(os.path.join(args.data_path, "good"), exist_ok=True)
-    #     os.makedirs(os.path.join(args.data_path, "crack"), exist_ok=True)
-    #     os.makedirs(os.path.join(args.data_path, "scratch"), exist_ok=True)
-
-    #     dummy_img = Image.new('RGB', (args.img_size, args.img_size), color = 'red')
-    #     for i in range(10):
-    #         dummy_img.save(os.path.join(args.data_path, "good", f"img_{i:03d}.png"))
-    #         dummy_img.save(os.path.join(args.data_path, "crack", f"img_{i:03d}.png"))
-    #         dummy_img.save(os.path.join(args.data_path, "scratch", f"img_{i:03d}.png"))
-
+    # Ensure logs folder exists
+    os.makedirs("logs", exist_ok=True)
+    
     train(args)

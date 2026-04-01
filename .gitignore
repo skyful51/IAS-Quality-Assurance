@@ -219,3 +219,7 @@ __marimo__/
 datasets/**/*
 !datasets/**/*.txt
 !datasets/
+
+# Results
+*.pth
+logs/
