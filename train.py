@@ -107,7 +107,7 @@ def train(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_path', type=str, required=True, help='Path to MVTec category (e.g. data/bottle)')
-    parser.add_argument('--backbone', type=str, default='resnet18', help='resnet18 or resnet50')
+    parser.add_argument('--backbone', type=str, default='resnet50', help='resnet18 or resnet50')
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--img_size', type=int, default=224)
     parser.add_argument('--lr', type=float, default=1e-4)
@@ -119,4 +119,8 @@ if __name__ == "__main__":
     # Ensure logs folder exists
     os.makedirs("logs", exist_ok=True)
     
-    train(args)
+    class_names = ['bottle', 'cable', 'capsule', 'carpet', 'grid', 'hazelnut', 'leather', 'metal_nut', 'pill', 'screw', 'tile', 'toothbrush', 'transistor', 'wood', 'zipper']
+    for class_name in class_names:
+        args.data_path = f"datasets/mvtec/{class_name}"
+        print(f"Training on {class_name}...")
+        train(args)

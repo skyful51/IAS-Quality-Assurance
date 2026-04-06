@@ -32,6 +32,24 @@ python train.py --data_path /path/to/mvtec/bottle --epochs 200 --lr 1e-4 --lr_st
 > [!TIP]
 > The model now uses a **StepLR scheduler** that reduces the learning rate by 1/10 every 50 epochs. This helps in achieving better intra-class compactness (higher cosine similarity) towards the end of the 200-epoch run.
 
+## 🔍 Phase 2: Inference & Anomaly Scoring
+
+After training the backbone (Phase 1), use `inference.py` to calculate anomaly scores for new or synthetic images.
+
+```bash
+python inference.py \
+    --backbone resnet50 \
+    --backbone_path logs/run_CATEGORY_TIMESTAMP/backbone_final.pth \
+    --head_path logs/run_CATEGORY_TIMESTAMP/head_final.pth \
+    --image_dir datasets/generated_dataset/anomaly_diffusion/bottle/broken_large/image
+```
+
+### Understanding the Score
+- **Anomaly Score**: Calculated as `1 - CosineSimilarity(image, Good_Centroid)`.
+- **0.0 ~ 0.2**: Likely a **Normal** image (high similarity to the Good centroid).
+- **0.5 ~ 1.2**: Likely an **Anomaly** (far from the Good centroid).
+- Results are saved to `inference_results.csv` in the model weight directory.
+
 ## 📊 Verification Results
 
 - **Feature Vectors**: Verified that the final output dimension is correct for both ResNet18 and ResNet50.
