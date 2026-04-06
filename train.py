@@ -4,7 +4,7 @@ import torch.optim as optim
 from data.dataset import get_dataloader
 from models.backbone import ResNetBackbone
 from models.heads import ArcMarginProduct
-from utils.visualize import visualize_embeddings
+from utils.visualize import visualize_embeddings, plot_center_similarity, plot_sample_to_centroid_similarity
 import argparse
 import os
 from datetime import datetime
@@ -29,14 +29,17 @@ def train(args):
     backbone = ResNetBackbone(model_name=args.backbone, pretrained=True).to(device)
     head = ArcMarginProduct(backbone.embedding_dim, num_classes, s=30.0, m=0.5).to(device)
 
-    # 3. Optimizer & Criterion (Step 4)
+    # 3. Optimizer, Criterion & Scheduler (Step 4)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam([
         {'params': backbone.parameters()},
         {'params': head.parameters()}
     ], lr=args.lr)
+    
+    # NEW: LR Scheduler (Decay every 50 epochs)
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step_size, gamma=0.1)
 
-    print("Starting Training...")
+    print(f"Starting Training for {args.epochs} epochs...")
     
     for epoch in range(args.epochs):
         backbone.train()
@@ -62,14 +65,39 @@ def train(args):
             total_loss += loss.item()
             
             if (i+1) % 10 == 0:
-                print(f"Epoch [{epoch+1}/{args.epochs}], Step [{i+1}/{len(dataloader)}], Loss: {loss.item():.4f}")
+                print(f"Epoch [{epoch+1}/{args.epochs}], Step [{i+1}/{len(dataloader)}], LR: {scheduler.get_last_lr()[0]:.6f}, Loss: {loss.item():.4f}")
 
         avg_loss = total_loss / len(dataloader)
         print(f"Epoch [{epoch+1}/{args.epochs}] Average Loss: {avg_loss:.4f}")
 
+        # Update Learning Rate
+        scheduler.step()
+
+        # Visualize results every 10 epochs
+        if (epoch + 1) % 10 == 0:
+            print(f"Saving visualizations for Epoch {epoch+1}...")
+            # Visualize Centroid Similarity
+            plot_center_similarity(
+                head, 
+                dataloader.dataset.classes, 
+                log_dir, 
+                epoch + 1
+            )
+
+            # Sample-to-Centroid Similarity Heatmap
+            plot_sample_to_centroid_similarity(
+                backbone, 
+                head, 
+                dataloader, 
+                device, 
+                dataloader.dataset.classes, 
+                log_dir, 
+                epoch + 1
+            )
+
     # 5. Visualization & Saving
     print("Training finished. Generating final visualization...")
-    visualize_embeddings(backbone, dataloader, device, log_dir, args.epochs)
+    visualize_embeddings(backbone, head, dataloader, device, log_dir, args.epochs)
 
     # Save Checkpoints in Log Dir
     torch.save(backbone.state_dict(), os.path.join(log_dir, "backbone_final.pth"))
@@ -83,7 +111,8 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--img_size', type=int, default=224)
     parser.add_argument('--lr', type=float, default=1e-4)
-    parser.add_argument('--epochs', type=int, default=10)
+    parser.add_argument('--lr_step_size', type=int, default=50, help='Decay LR every N epochs')
+    parser.add_argument('--epochs', type=int, default=200)
     
     args = parser.parse_args()
     
