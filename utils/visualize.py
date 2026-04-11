@@ -165,3 +165,101 @@ def visualize_embeddings(backbone, head, dataloader, device, save_path, epoch):
     plt.savefig(plot_file)
     plt.close()
     print(f"Enhanced visualization saved to {plot_file}")
+
+def visualize_morphological_transform(dataset, save_path, num_samples=10):
+    """
+    Saves a few examples of morphological transformations to verify correctness.
+    """
+    os.makedirs(save_path, exist_ok=True)
+    
+    types = ['dilation', 'erosion', 'gradient']
+    widths = [1, 3, 7, 11]
+    heights = [1, 3, 7, 11]
+    angles = [0, 90, 180, 270]
+
+    plt.figure(figsize=(15, 6 * num_samples))
+    
+    for i in range(num_samples):
+        # Get a sample
+        idx = np.random.randint(len(dataset))
+        img_path = dataset.image_paths[idx]
+        orig_image = plt.imread(img_path)
+        
+        # Apply transformation
+        # We need the underlying MorphologyDataset
+        morph_ds = dataset
+        if isinstance(dataset, torch.utils.data.Subset):
+            morph_ds = dataset.dataset
+        
+        # Pick random combo
+        c_idx = np.random.randint(len(morph_ds.combinations))
+        t_idx, w_idx, h_idx, a_idx = morph_ds.combinations[c_idx]
+        
+        transformed_image = morph_ds.apply_morphology(plt.imread(img_path), t_idx, w_idx, h_idx, a_idx)
+        transformed_image = np.array(transformed_image)
+        
+        # Plot
+        plt.subplot(num_samples, 2, 2*i + 1)
+        plt.imshow(orig_image)
+        plt.title(f"Original: {os.path.basename(img_path)}")
+        plt.axis('off')
+        
+        plt.subplot(num_samples, 2, 2*i + 2)
+        plt.imshow(transformed_image)
+        plt.title(f"Type: {types[t_idx]}, W: {widths[w_idx]}, H: {heights[h_idx]}, R: {angles[a_idx]}")
+        plt.axis('off')
+        
+    plt.tight_layout()
+    save_file = os.path.join(save_path, "morphology_verification.png")
+    plt.savefig(save_file)
+    plt.close()
+    print(f"Morphological transformation verification saved to {save_file}")
+
+def visualize_embeddings_ssl(backbone, dataloader, device, save_path, epoch):
+    """
+    Collects embeddings and visualizes them using t-SNE, colored by transformation type.
+    """
+    backbone.eval()
+    all_embeddings = []
+    all_types = []
+
+    with torch.no_grad():
+        for images, t_labels, w_labels, h_labels, a_labels in dataloader:
+            images = images.to(device)
+            embeddings = torch.nn.functional.normalize(backbone(images))
+            all_embeddings.append(embeddings.cpu().numpy())
+            all_types.append(t_labels.numpy())
+
+    all_embeddings = np.concatenate(all_embeddings, axis=0)
+    all_types = np.concatenate(all_types, axis=0)
+    
+    # Run t-SNE
+    print(f"Running t-SNE for SSL on {len(all_embeddings)} samples...")
+    tsne = TSNE(n_components=2, random_state=42, perplexity=min(30, len(all_embeddings)-1))
+    embeddings_2d = tsne.fit_transform(all_embeddings)
+    
+    # Plotting
+    plt.figure(figsize=(10, 8))
+    types = ['Dilation', 'Erosion', 'Gradient']
+    colors = ['red', 'blue', 'green']
+    
+    for i in range(len(types)):
+        mask = all_types == i
+        plt.scatter(
+            embeddings_2d[mask, 0], 
+            embeddings_2d[mask, 1], 
+            color=colors[i],
+            label=types[i],
+            alpha=0.6,
+            s=20
+        )
+
+    plt.legend()
+    plt.title(f"SSL Embedding Visualization (t-SNE) - Epoch {epoch}")
+    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.tight_layout()
+    
+    plot_file = os.path.join(save_path, f"ssl_embedding_vix_epoch_{epoch}.png")
+    plt.savefig(plot_file)
+    plt.close()
+    print(f"SSL visualization saved to {plot_file}")

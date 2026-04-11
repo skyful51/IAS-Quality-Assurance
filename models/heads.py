@@ -49,3 +49,39 @@ class ArcMarginProduct(nn.Module):
         output *= self.s
         
         return output
+
+class MorphologySSLHeads(nn.Module):
+    """
+    Independent ArcFace heads for Morphology Proxy Tasks
+    - type_head: Dilation, Erosion, Gradient (3 classes)
+    - width_head: {1, 3, 7, 11} (4 classes)
+    - height_head: {1, 3, 7, 11} (4 classes)
+    - angle_head: {0, 90, 180, 270} (4 classes)
+    """
+    def __init__(self, in_features, s=30.0, m=0.5):
+        super(MorphologySSLHeads, self).__init__()
+        
+        # 4 independent ArcFace heads
+        self.type_head = ArcMarginProduct(in_features, 3, s=s, m=m)
+        self.width_head = ArcMarginProduct(in_features, 4, s=s, m=m)
+        self.height_head = ArcMarginProduct(in_features, 4, s=s, m=m)
+        self.angle_head = ArcMarginProduct(in_features, 4, s=s, m=m)
+
+    def forward(self, embedding, t_label=None, w_label=None, h_label=None, a_label=None):
+        """
+        Args:
+            embedding: Feature from backbone
+            labels: Ground truth labels for each head
+        Returns:
+            Logits for each head
+        """
+        # If labels are not provided (during inference/scoring), we can still return cosine similarities
+        # ArcMarginProduct expects labels for training (to apply margin)
+        # For simplicity, we assume labels are provided during training.
+        
+        logits_t = self.type_head(embedding, t_label) if t_label is not None else F.linear(F.normalize(embedding), F.normalize(self.type_head.weight)) * self.type_head.s
+        logits_w = self.width_head(embedding, w_label) if w_label is not None else F.linear(F.normalize(embedding), F.normalize(self.width_head.weight)) * self.width_head.s
+        logits_h = self.height_head(embedding, h_label) if h_label is not None else F.linear(F.normalize(embedding), F.normalize(self.height_head.weight)) * self.height_head.s
+        logits_a = self.angle_head(embedding, a_label) if a_label is not None else F.linear(F.normalize(embedding), F.normalize(self.angle_head.weight)) * self.angle_head.s
+        
+        return logits_t, logits_w, logits_h, logits_a
