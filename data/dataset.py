@@ -142,8 +142,15 @@ class MorphologyDataset(Dataset):
         return len(self.image_paths)
 
     def apply_morphology(self, image, t_idx, w_idx, h_idx, a_idx):
-        # Convert PIL to CV2
-        img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+        # Convert PIL to CV2 (Ensure uint8)
+        img_np = np.array(image)
+        if img_np.dtype != np.uint8:
+            if img_np.max() <= 1.0:
+                img_np = (img_np * 255).astype(np.uint8)
+            else:
+                img_np = img_np.astype(np.uint8)
+        
+        img_cv = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
         
         # 1. Rotation
         angle = self.angles[a_idx]

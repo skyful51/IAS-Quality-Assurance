@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.manifold import TSNE
 import os
+from PIL import Image
 
 def plot_center_similarity(head, classes, save_path, epoch):
     """
@@ -182,20 +183,24 @@ def visualize_morphological_transform(dataset, save_path, num_samples=10):
     for i in range(num_samples):
         # Get a sample
         idx = np.random.randint(len(dataset))
-        img_path = dataset.image_paths[idx]
-        orig_image = plt.imread(img_path)
         
-        # Apply transformation
-        # We need the underlying MorphologyDataset
+        # Handle Subset correctly
         morph_ds = dataset
         if isinstance(dataset, torch.utils.data.Subset):
             morph_ds = dataset.dataset
+            actual_idx = dataset.indices[idx]
+        else:
+            actual_idx = idx
+            
+        img_path = morph_ds.image_paths[actual_idx]
+        orig_pil = Image.open(img_path).convert('RGB')
+        orig_image = np.array(orig_pil)
         
         # Pick random combo
         c_idx = np.random.randint(len(morph_ds.combinations))
         t_idx, w_idx, h_idx, a_idx = morph_ds.combinations[c_idx]
         
-        transformed_image = morph_ds.apply_morphology(plt.imread(img_path), t_idx, w_idx, h_idx, a_idx)
+        transformed_image = morph_ds.apply_morphology(orig_pil, t_idx, w_idx, h_idx, a_idx)
         transformed_image = np.array(transformed_image)
         
         # Plot
