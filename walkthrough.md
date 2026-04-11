@@ -48,7 +48,11 @@ python inference.py \
 - **Anomaly Score**: Calculated as `1 - CosineSimilarity(image, Good_Centroid)`.
 - **0.0 ~ 0.2**: Likely a **Normal** image (high similarity to the Good centroid).
 - **0.5 ~ 1.2**: Likely an **Anomaly** (far from the Good centroid).
-- Results are saved to `inference_results.csv` in the model weight directory.
+### Grad-CAM Visualization (Explainable AI)
+The inference script now automatically generates **Side-by-Side** Grad-CAM heatmaps.
+- **Format**: `[ Original Image | CAM Overlay ]` concatenated horizontally.
+- **Location**: `logs/run_.../cam/{defect_group}/{file_name}_cam.jpg`
+- **Utility**: Use this to verify if the model is correctly looking at the **defect** or just a **shortcut** (like the product edge or background noise).
 
 ## 📊 Verification Results
 
