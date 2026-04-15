@@ -185,4 +185,13 @@ if __name__ == "__main__":
     # Ensure logs folder exists
     os.makedirs("logs", exist_ok=True)
     
-    train(args)
+    class_names = ['bottle', 'cable', 'capsule', 'carpet', 'grid', 'hazelnut', 'leather', 'metal_nut', 'pill', 'screw', 'tile', 'toothbrush', 'transistor', 'wood', 'zipper']
+    for class_name in class_names:
+        args.data_path = f"datasets/mvtec/{class_name}"
+        if not os.path.exists(args.data_path):
+            print(f"Directory {args.data_path} not found. Skipping {class_name}...")
+            continue
+        print(f"\n" + "="*50)
+        print(f"Training on {class_name}...")
+        print("="*50 + "\n")
+        train(args)
