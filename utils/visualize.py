@@ -174,8 +174,8 @@ def visualize_morphological_transform(dataset, save_path, num_samples=10):
     os.makedirs(save_path, exist_ok=True)
     
     types = ['dilation', 'erosion', 'gradient']
-    widths = [1, 3, 7, 11]
-    heights = [1, 3, 7, 11]
+    widths = [3, 7, 11, 13]
+    heights = [3, 7, 11, 13]
 
     plt.figure(figsize=(15, 6 * num_samples))
     
@@ -191,7 +191,9 @@ def visualize_morphological_transform(dataset, save_path, num_samples=10):
         else:
             actual_idx = idx
             
-        img_path = morph_ds.image_paths[actual_idx]
+        # Use modulo to map back to real image paths
+        real_img_idx = actual_idx % len(morph_ds.image_paths)
+        img_path = morph_ds.image_paths[real_img_idx]
         orig_pil = Image.open(img_path).convert('RGB')
         orig_image = np.array(orig_pil)
         

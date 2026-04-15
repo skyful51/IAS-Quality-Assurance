@@ -125,8 +125,8 @@ class MorphologyDataset(Dataset):
         
         # Transformation Parameters
         self.types = ['dilation', 'erosion', 'gradient']
-        self.widths = [1, 3, 7, 11]
-        self.heights = [1, 3, 7, 11]
+        self.widths = [3, 7, 11, 13]
+        self.heights = [3, 7, 11, 13]
         
         # All 48 combinations (3 * 4 * 4)
         self.combinations = list(product(range(len(self.types)), 
