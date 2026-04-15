@@ -137,7 +137,7 @@ class MorphologyDataset(Dataset):
         self.num_combos = len(self.combinations)
 
     def __len__(self):
-        return len(self.image_paths)
+        return len(self.image_paths) * 10
 
     def apply_morphology(self, image, t_idx, w_idx, h_idx):
         # Convert PIL to CV2 (Ensure uint8)
