@@ -63,26 +63,25 @@ def train(args):
         backbone.train()
         heads.train()
         
-        epoch_losses = {'total': 0, 'type': 0, 'width': 0, 'height': 0, 'angle': 0}
-        epoch_accs = {'type': 0, 'width': 0, 'height': 0, 'angle': 0}
+        epoch_losses = {'total': 0, 'type': 0, 'width': 0, 'height': 0}
+        epoch_accs = {'type': 0, 'width': 0, 'height': 0}
         
-        for i, (images, t_labels, w_labels, h_labels, a_labels) in enumerate(train_loader):
+        for i, (images, t_labels, w_labels, h_labels) in enumerate(train_loader):
             images = images.to(device)
-            t_labels, w_labels, h_labels, a_labels = t_labels.to(device), w_labels.to(device), h_labels.to(device), a_labels.to(device)
+            t_labels, w_labels, h_labels = t_labels.to(device), w_labels.to(device), h_labels.to(device)
 
             # Backbone Embedding
             embeddings = backbone(images)
 
             # SSL Heads
-            logits_t, logits_w, logits_h, logits_a = heads(embeddings, t_labels, w_labels, h_labels, a_labels)
+            logits_t, logits_w, logits_h = heads(embeddings, t_labels, w_labels, h_labels)
 
             # Combined Angular Margin Loss
             loss_t = criterion(logits_t, t_labels)
             loss_w = criterion(logits_w, w_labels)
             loss_h = criterion(logits_h, h_labels)
-            loss_a = criterion(logits_a, a_labels)
             
-            total_loss = loss_t + loss_w + loss_h + loss_a
+            total_loss = loss_t + loss_w + loss_h
 
             # Backward and Optimize
             optimizer.zero_grad()
@@ -94,12 +93,10 @@ def train(args):
             epoch_losses['type'] += loss_t.item()
             epoch_losses['width'] += loss_w.item()
             epoch_losses['height'] += loss_h.item()
-            epoch_losses['angle'] += loss_a.item()
             
             epoch_accs['type'] += get_accuracy(logits_t, t_labels)
             epoch_accs['width'] += get_accuracy(logits_w, w_labels)
             epoch_accs['height'] += get_accuracy(logits_h, h_labels)
-            epoch_accs['angle'] += get_accuracy(logits_a, a_labels)
             
             if (i+1) % 10 == 0:
                 print(f"Epoch [{epoch+1}/{args.epochs}], Step [{i+1}/{len(train_loader)}], Loss: {total_loss.item():.4f}")
@@ -114,39 +111,36 @@ def train(args):
         if (epoch + 1) % 5 == 0:
             backbone.eval()
             heads.eval()
-            val_accs = {'type': 0, 'width': 0, 'height': 0, 'angle': 0}
-            val_losses = {'total': 0, 'type': 0, 'width': 0, 'height': 0, 'angle': 0}
+            val_accs = {'type': 0, 'width': 0, 'height': 0}
+            val_losses = {'total': 0, 'type': 0, 'width': 0, 'height': 0}
             
             with torch.no_grad():
-                for images, t_labels, w_labels, h_labels, a_labels in val_loader:
+                for images, t_labels, w_labels, h_labels in val_loader:
                     images = images.to(device)
-                    t_labels, w_labels, h_labels, a_labels = t_labels.to(device), w_labels.to(device), h_labels.to(device), a_labels.to(device)
+                    t_labels, w_labels, h_labels = t_labels.to(device), w_labels.to(device), h_labels.to(device)
                     
                     embeddings = backbone(images)
-                    l_t, l_w, l_h, l_a = heads(embeddings, t_labels, w_labels, h_labels, a_labels)
+                    l_t, l_w, l_h = heads(embeddings, t_labels, w_labels, h_labels)
                     
                     v_loss_t = criterion(l_t, t_labels)
                     v_loss_w = criterion(l_w, w_labels)
                     v_loss_h = criterion(l_h, h_labels)
-                    v_loss_a = criterion(l_a, a_labels)
                     
-                    val_losses['total'] += (v_loss_t + v_loss_w + v_loss_h + v_loss_a).item()
+                    val_losses['total'] += (v_loss_t + v_loss_w + v_loss_h).item()
                     val_losses['type'] += v_loss_t.item()
                     val_losses['width'] += v_loss_w.item()
                     val_losses['height'] += v_loss_h.item()
-                    val_losses['angle'] += v_loss_a.item()
                     
                     val_accs['type'] += get_accuracy(l_t, t_labels)
                     val_accs['width'] += get_accuracy(l_w, w_labels)
                     val_accs['height'] += get_accuracy(l_h, h_labels)
-                    val_accs['angle'] += get_accuracy(l_a, a_labels)
             
             val_stats = {f"Val/Loss_{k}": v / len(val_loader) for k, v in val_losses.items()}
             val_stats.update({f"Val/Acc_{k}": v / len(val_loader) for k, v in val_accs.items()})
             wandb.log(val_stats, step=epoch+1)
             
             # Save Best Model based on overall Accuracy
-            current_val_acc = (val_accs['type'] + val_accs['width'] + val_accs['height'] + val_accs['angle']) / (4 * len(val_loader))
+            current_val_acc = (val_accs['type'] + val_accs['width'] + val_accs['height']) / (3 * len(val_loader))
             if current_val_acc > best_val_acc:
                 best_val_acc = current_val_acc
                 torch.save(backbone.state_dict(), os.path.join(log_dir, f"best_backbone_epoch_{epoch+1}.pth"))

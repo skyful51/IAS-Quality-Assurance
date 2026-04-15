@@ -176,7 +176,6 @@ def visualize_morphological_transform(dataset, save_path, num_samples=10):
     types = ['dilation', 'erosion', 'gradient']
     widths = [1, 3, 7, 11]
     heights = [1, 3, 7, 11]
-    angles = [0, 90, 180, 270]
 
     plt.figure(figsize=(15, 6 * num_samples))
     
@@ -198,9 +197,9 @@ def visualize_morphological_transform(dataset, save_path, num_samples=10):
         
         # Pick random combo
         c_idx = np.random.randint(len(morph_ds.combinations))
-        t_idx, w_idx, h_idx, a_idx = morph_ds.combinations[c_idx]
+        t_idx, w_idx, h_idx = morph_ds.combinations[c_idx]
         
-        transformed_image = morph_ds.apply_morphology(orig_pil, t_idx, w_idx, h_idx, a_idx)
+        transformed_image = morph_ds.apply_morphology(orig_pil, t_idx, w_idx, h_idx)
         transformed_image = np.array(transformed_image)
         
         # Plot
@@ -211,7 +210,7 @@ def visualize_morphological_transform(dataset, save_path, num_samples=10):
         
         plt.subplot(num_samples, 2, 2*i + 2)
         plt.imshow(transformed_image)
-        plt.title(f"Type: {types[t_idx]}, W: {widths[w_idx]}, H: {heights[h_idx]}, R: {angles[a_idx]}")
+        plt.title(f"Type: {types[t_idx]}, W: {widths[w_idx]}, H: {heights[h_idx]}")
         plt.axis('off')
         
     plt.tight_layout()
@@ -229,7 +228,7 @@ def visualize_embeddings_ssl(backbone, dataloader, device, save_path, epoch):
     all_types = []
 
     with torch.no_grad():
-        for images, t_labels, w_labels, h_labels, a_labels in dataloader:
+        for images, t_labels, w_labels, h_labels in dataloader:
             images = images.to(device)
             embeddings = torch.nn.functional.normalize(backbone(images))
             all_embeddings.append(embeddings.cpu().numpy())

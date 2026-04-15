@@ -127,13 +127,11 @@ class MorphologyDataset(Dataset):
         self.types = ['dilation', 'erosion', 'gradient']
         self.widths = [1, 3, 7, 11]
         self.heights = [1, 3, 7, 11]
-        self.angles = [0, 90, 180, 270]
         
-        # All 192 combinations (3 * 4 * 4 * 4)
+        # All 48 combinations (3 * 4 * 4)
         self.combinations = list(product(range(len(self.types)), 
                                         range(len(self.widths)), 
-                                        range(len(self.heights)), 
-                                        range(len(self.angles))))
+                                        range(len(self.heights))))
         
         # To ensure balanced sampling within an epoch, we can assign combinations to indices
         self.num_combos = len(self.combinations)
@@ -141,7 +139,7 @@ class MorphologyDataset(Dataset):
     def __len__(self):
         return len(self.image_paths)
 
-    def apply_morphology(self, image, t_idx, w_idx, h_idx, a_idx):
+    def apply_morphology(self, image, t_idx, w_idx, h_idx):
         # Convert PIL to CV2 (Ensure uint8)
         img_np = np.array(image)
         if img_np.dtype != np.uint8:
@@ -152,16 +150,7 @@ class MorphologyDataset(Dataset):
         
         img_cv = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
         
-        # 1. Rotation
-        angle = self.angles[a_idx]
-        if angle == 90:
-            img_cv = cv2.rotate(img_cv, cv2.ROTATE_90_CLOCKWISE)
-        elif angle == 180:
-            img_cv = cv2.rotate(img_cv, cv2.ROTATE_180)
-        elif angle == 270:
-            img_cv = cv2.rotate(img_cv, cv2.ROTATE_90_COUNTERCLOCKWISE)
-            
-        # 2. Morphology
+        # Morphology
         w = self.widths[w_idx]
         h = self.heights[h_idx]
         kernel = np.ones((h, w), np.uint8)
@@ -181,18 +170,16 @@ class MorphologyDataset(Dataset):
         image = Image.open(img_path).convert('RGB')
         image = image.resize((self.img_size, self.img_size))
         
-        # Pick a combination. For "balanced sampling", we can use idx if we want determinism per image,
-        # but to have all combos in a batch, we could use a global counter or random.
-        # Let's use random choice for simplicity, or we can use a cycle if we want to be strict.
+        # Pick a combination.
         c_idx = random.randint(0, self.num_combos - 1)
-        t_idx, w_idx, h_idx, a_idx = self.combinations[c_idx]
+        t_idx, w_idx, h_idx = self.combinations[c_idx]
         
-        transformed_image = self.apply_morphology(image, t_idx, w_idx, h_idx, a_idx)
+        transformed_image = self.apply_morphology(image, t_idx, w_idx, h_idx)
         
         if self.transform:
             transformed_image = self.transform(transformed_image)
             
-        return transformed_image, t_idx, w_idx, h_idx, a_idx
+        return transformed_image, t_idx, w_idx, h_idx
 
 def get_ssl_dataloader(category_root, batch_size=32, img_size=224, val_split=0.1):
     """
