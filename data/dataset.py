@@ -111,17 +111,21 @@ class MorphologyDataset(Dataset):
     Self-Supervised Morphology Dataset.
     Only uses 'good' images and applies real-time morphological transformations.
     """
-    def __init__(self, category_root, transform=None, img_size=224):
+    def __init__(self, category_root, transform=None, img_size=224, is_train=True, image_paths=None):
         self.category_root = category_root
         self.transform = transform
         self.img_size = img_size
+        self.is_train = is_train
         
-        self.image_paths = []
-        train_good_dir = os.path.join(category_root, 'train', 'good')
-        if os.path.exists(train_good_dir):
-            for img_name in os.listdir(train_good_dir):
-                if img_name.lower().endswith(('.png', '.jpg', '.jpeg')):
-                    self.image_paths.append(os.path.join(train_good_dir, img_name))
+        if image_paths is not None:
+            self.image_paths = image_paths
+        else:
+            self.image_paths = []
+            train_good_dir = os.path.join(category_root, 'train', 'good')
+            if os.path.exists(train_good_dir):
+                for img_name in os.listdir(train_good_dir):
+                    if img_name.lower().endswith(('.png', '.jpg', '.jpeg')):
+                        self.image_paths.append(os.path.join(train_good_dir, img_name))
         
         # Transformation Parameters
         self.types = ['dilation', 'erosion', 'gradient']
@@ -133,11 +137,13 @@ class MorphologyDataset(Dataset):
                                         range(len(self.widths)), 
                                         range(len(self.heights))))
         
-        # To ensure balanced sampling within an epoch, we can assign combinations to indices
         self.num_combos = len(self.combinations)
 
     def __len__(self):
-        return len(self.image_paths) * 10
+        # Inflate length only during training
+        if self.is_train:
+            return len(self.image_paths) * 10
+        return len(self.image_paths)
 
     def apply_morphology(self, image, t_idx, w_idx, h_idx):
         # Convert PIL to CV2 (Ensure uint8)
@@ -166,7 +172,9 @@ class MorphologyDataset(Dataset):
         return Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB))
 
     def __getitem__(self, idx):
-        img_path = self.image_paths[idx]
+        # Map back to real image paths using modulo
+        real_idx = idx % len(self.image_paths)
+        img_path = self.image_paths[real_idx]
         image = Image.open(img_path).convert('RGB')
         image = image.resize((self.img_size, self.img_size))
         
@@ -185,24 +193,32 @@ def get_ssl_dataloader(category_root, batch_size=32, img_size=224, val_split=0.1
     """
     Creates Training and Validation DataLoaders for SSL task.
     """
+    # 1. Collect all valid image paths first
+    train_good_dir = os.path.join(category_root, 'train', 'good')
+    all_image_paths = []
+    if os.path.exists(train_good_dir):
+        for img_name in os.listdir(train_good_dir):
+            if img_name.lower().endswith(('.png', '.jpg', '.jpeg')):
+                all_image_paths.append(os.path.join(train_good_dir, img_name))
+    
+    # 2. Split paths to ensure clean separation between train and val
+    np.random.seed(42)
+    np.random.shuffle(all_image_paths)
+    num_total = len(all_image_paths)
+    num_val = int(np.floor(val_split * num_total))
+    
+    val_paths = all_image_paths[:num_val]
+    train_paths = all_image_paths[num_val:]
+    
+    # 3. Define transform
     transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
     
-    full_dataset = MorphologyDataset(category_root, transform=transform, img_size=img_size)
-    dataset_size = len(full_dataset)
-    indices = list(range(dataset_size))
-    split = int(np.floor(val_split * dataset_size))
-    
-    # Shuffle for split
-    np.random.seed(42)
-    np.random.shuffle(indices)
-    
-    train_indices, val_indices = indices[split:], indices[:split]
-    
-    train_dataset = Subset(full_dataset, train_indices)
-    val_dataset = Subset(full_dataset, val_indices)
+    # 4. Create separate datasets with different behaviors
+    train_dataset = MorphologyDataset(category_root, transform=transform, img_size=img_size, is_train=True, image_paths=train_paths)
+    val_dataset = MorphologyDataset(category_root, transform=transform, img_size=img_size, is_train=False, image_paths=val_paths)
     
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
