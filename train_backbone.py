@@ -143,17 +143,10 @@ def train(args):
             current_val_acc = (val_accs['type'] + val_accs['width'] + val_accs['height']) / (3 * len(val_loader))
             if current_val_acc > best_val_acc:
                 best_val_acc = current_val_acc
-                torch.save(backbone.state_dict(), os.path.join(log_dir, f"best_backbone_epoch_{epoch+1}.pth"))
-                torch.save(heads.state_dict(), os.path.join(log_dir, f"best_heads_epoch_{epoch+1}.pth"))
+                torch.save(backbone.state_dict(), os.path.join(log_dir, "best_backbone.pth"))
+                torch.save(heads.state_dict(), os.path.join(log_dir, "best_heads.pth"))
                 print(f"New best model saved at epoch {epoch+1} with Accuracy: {best_val_acc:.4f}")
 
-        # Save weights every epoch
-        torch.save({
-            'epoch': epoch + 1,
-            'backbone_state_dict': backbone.state_dict(),
-            'heads_state_dict': heads.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-        }, os.path.join(log_dir, f"checkpoint_epoch_{epoch+1}.pth"))
 
         # Last weights
         torch.save(backbone.state_dict(), os.path.join(log_dir, "last_backbone.pth"))
