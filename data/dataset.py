@@ -111,21 +111,27 @@ class MorphologyDataset(Dataset):
     Self-Supervised Morphology Dataset.
     Only uses 'good' images and applies real-time morphological transformations.
     """
-    def __init__(self, category_root, transform=None, img_size=224, is_train=True, image_paths=None):
+    def __init__(self, category_root, transform=None, img_size=224, is_train=True, image_paths=None, labels=None):
         self.category_root = category_root
         self.transform = transform
         self.img_size = img_size
         self.is_train = is_train
         
-        if image_paths is not None:
+        if image_paths is not None and labels is not None:
             self.image_paths = image_paths
+            self.labels = labels
+        elif image_paths is not None:
+            self.image_paths = image_paths
+            self.labels = [0] * len(image_paths)
         else:
             self.image_paths = []
+            self.labels = []
             train_good_dir = os.path.join(category_root, 'train', 'good')
             if os.path.exists(train_good_dir):
                 for img_name in os.listdir(train_good_dir):
                     if img_name.lower().endswith(('.png', '.jpg', '.jpeg')):
                         self.image_paths.append(os.path.join(train_good_dir, img_name))
+                        self.labels.append(0)
         
         # Transformation Parameters
         self.types = ['dilation', 'erosion', 'gradient']
@@ -175,8 +181,19 @@ class MorphologyDataset(Dataset):
         # Map back to real image paths using modulo
         real_idx = idx % len(self.image_paths)
         img_path = self.image_paths[real_idx]
+        identity_label = self.labels[real_idx]
         image = Image.open(img_path).convert('RGB')
-        image = image.resize((self.img_size, self.img_size))
+        
+        if self.is_train:
+            spatial_transform = transforms.Compose([
+                transforms.RandomResizedCrop(size=self.img_size, scale=(0.8, 1.0)),
+                transforms.RandomHorizontalFlip(),
+                transforms.RandomVerticalFlip(),
+                transforms.ColorJitter(brightness=0.1, contrast=0.1)
+            ])
+            image = spatial_transform(image)
+        else:
+            image = image.resize((self.img_size, self.img_size))
         
         # Pick a combination.
         c_idx = random.randint(0, self.num_combos - 1)
@@ -187,28 +204,33 @@ class MorphologyDataset(Dataset):
         if self.transform:
             transformed_image = self.transform(transformed_image)
             
-        return transformed_image, t_idx, w_idx, h_idx
+        return transformed_image, identity_label, t_idx, w_idx, h_idx
 
 def get_ssl_dataloader(category_root, batch_size=32, img_size=224, val_split=0.1):
     """
     Creates Training and Validation DataLoaders for SSL task.
     """
-    # 1. Collect all valid image paths first
-    train_good_dir = os.path.join(category_root, 'train', 'good')
-    all_image_paths = []
-    if os.path.exists(train_good_dir):
-        for img_name in os.listdir(train_good_dir):
-            if img_name.lower().endswith(('.png', '.jpg', '.jpeg')):
-                all_image_paths.append(os.path.join(train_good_dir, img_name))
+    # 1. Collect all valid image paths and their identity labels
+    dataset_collector = MVTecADDataset(category_root, transform=None, include_test_good=True)
+    all_image_paths = dataset_collector.image_paths
+    all_labels = dataset_collector.labels
     
     # 2. Split paths to ensure clean separation between train and val
     np.random.seed(42)
-    np.random.shuffle(all_image_paths)
+    indices = np.arange(len(all_image_paths))
+    np.random.shuffle(indices)
+    
     num_total = len(all_image_paths)
     num_val = int(np.floor(val_split * num_total))
     
-    val_paths = all_image_paths[:num_val]
-    train_paths = all_image_paths[num_val:]
+    val_indices = indices[:num_val]
+    train_indices = indices[num_val:]
+    
+    val_paths = [all_image_paths[i] for i in val_indices]
+    val_labels = [all_labels[i] for i in val_indices]
+    
+    train_paths = [all_image_paths[i] for i in train_indices]
+    train_labels = [all_labels[i] for i in train_indices]
     
     # 3. Define transform
     transform = transforms.Compose([
@@ -217,8 +239,8 @@ def get_ssl_dataloader(category_root, batch_size=32, img_size=224, val_split=0.1
     ])
     
     # 4. Create separate datasets with different behaviors
-    train_dataset = MorphologyDataset(category_root, transform=transform, img_size=img_size, is_train=True, image_paths=train_paths)
-    val_dataset = MorphologyDataset(category_root, transform=transform, img_size=img_size, is_train=False, image_paths=val_paths)
+    train_dataset = MorphologyDataset(category_root, transform=transform, img_size=img_size, is_train=True, image_paths=train_paths, labels=train_labels)
+    val_dataset = MorphologyDataset(category_root, transform=transform, img_size=img_size, is_train=False, image_paths=val_paths, labels=val_labels)
     
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)

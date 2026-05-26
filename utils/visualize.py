@@ -230,7 +230,7 @@ def visualize_embeddings_ssl(backbone, dataloader, device, save_path, epoch):
     all_types = []
 
     with torch.no_grad():
-        for images, t_labels, w_labels, h_labels in dataloader:
+        for images, id_labels, t_labels, w_labels, h_labels in dataloader:
             images = images.to(device)
             embeddings = torch.nn.functional.normalize(backbone(images))
             all_embeddings.append(embeddings.cpu().numpy())
