@@ -5,7 +5,7 @@ from PIL import Image
 import os
 import argparse
 import pandas as pd
-from models.backbone import ResNetBackbone
+from models.backbone import ResNetBackbone, CutPasteBackbone
 from models.heads import ArcMarginProduct
 from pytorch_grad_cam import GradCAM
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
@@ -29,18 +29,25 @@ class ArcFaceCAMWrapper(nn.Module):
         logits = torch.matmul(features, self.centroids.t())
         return logits
 
-def load_models(backbone_type, backbone_path, head_path, num_classes, device):
+def load_models(args, num_classes, device):
     """
     Loads trained backbone and head, and extracts the centroids.
     """
     # Initialize Models
-    backbone = ResNetBackbone(model_name=backbone_type, pretrained=False).to(device)
+    if args.backbone == 'cutpaste':
+        backbone = CutPasteBackbone(
+            pretrained=False,
+            head_layers=args.head_layer,
+            include_head=args.include_head,
+            checkpoint_path=args.backbone_path
+        ).to(device)
+    else:
+        backbone = ResNetBackbone(model_name=args.backbone, pretrained=False).to(device)
+        backbone.load_state_dict(torch.load(args.backbone_path, map_location=device))
+        
     # ArcMarginProduct needs num_classes to load weights correctly
     head = ArcMarginProduct(backbone.embedding_dim, num_classes).to(device)
-    
-    # Load Weights
-    backbone.load_state_dict(torch.load(backbone_path, map_location=device))
-    head.load_state_dict(torch.load(head_path, map_location=device))
+    head.load_state_dict(torch.load(args.head_path, map_location=device))
     
     backbone.eval()
     head.eval()
@@ -93,11 +100,14 @@ def run_inference(args):
     head_state = torch.load(args.head_path, map_location='cpu')
     num_classes = head_state['weight'].shape[0]
     
-    backbone, centroids = load_models(args.backbone, args.backbone_path, args.head_path, num_classes, device)
+    backbone, centroids = load_models(args, num_classes, device)
     
     # Initialize Grad-CAM
-    # For ResNet, we target the last convolutional layer
-    target_layers = [backbone.model.layer4[-1]]
+    # Target the last convolutional layer of the ResNet part
+    if args.backbone == 'cutpaste':
+        target_layers = [backbone.resnet18.layer4[-1]]
+    else:
+        target_layers = [backbone.model.layer4[-1]]
     cam_wrapper = ArcFaceCAMWrapper(backbone, centroids).to(device)
     cam_tool = GradCAM(model=cam_wrapper, target_layers=target_layers)
     
@@ -187,11 +197,13 @@ def run_inference(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--backbone', type=str, default='resnet50', help='resnet18 or resnet50')
-    parser.add_argument('--backbone_path', type=str, required=True, help='Path to backbone_final.pth')
+    parser.add_argument('--backbone', type=str, default='resnet50', choices=['cutpaste', 'resnet18', 'resnet50'], help='backbone type')
+    parser.add_argument('--backbone_path', type=str, required=True, help='Path to backbone_final.pth or CutPaste checkpoint')
     parser.add_argument('--head_path', type=str, required=True, help='Path to head_final.pth')
     parser.add_argument('--dataset_root', type=str, required=True, help='Root dir of generated dataset')
     parser.add_argument('--class_name', type=str, required=True, help='Class name (e.g. bottle)')
+    parser.add_argument('--head_layer', type=int, default=2, help="Number of head layers in CutPaste model (default: 2)")
+    parser.add_argument('--include_head', action='store_true', help="Include CutPaste projection head (outputs 128-dim features) instead of ResNet18 raw features (512-dim)")
     
     args = parser.parse_args()
     run_inference(args)
