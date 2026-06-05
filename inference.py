@@ -134,6 +134,11 @@ def run_inference(args):
     results = []
     image_exts = ('.jpg', '.jpeg', '.png', '.bmp')
     
+    correct_predictions = 0
+    total_predictions = 0
+    class_correct = {c: 0 for c in class_names}
+    class_total = {c: 0 for c in class_names}
+    
     for defect_type in os.listdir(target_root):
         defect_type_path = os.path.join(target_root, defect_type)
         if not os.path.isdir(defect_type_path): continue
@@ -167,11 +172,24 @@ def run_inference(args):
                     cam_save_path = os.path.join(defect_cam_dir, cam_filename)
                     cv2.imwrite(cam_save_path, cv2.cvtColor(combined, cv2.COLOR_RGB2BGR))
                     
+                    pred_class_name = class_names[pred_idx] if pred_idx < len(class_names) else f"class_{pred_idx}"
+                    
+                    # Track classification accuracy
+                    is_correct = (pred_class_name == defect_type)
+                    if is_correct:
+                        correct_predictions += 1
+                        if defect_type in class_correct:
+                            class_correct[defect_type] += 1
+                    if defect_type in class_total:
+                        class_total[defect_type] += 1
+                    total_predictions += 1
+                    
                     res_dict = {
                         'defect_group': defect_type,
                         'file_name': file,
                         'anomaly_score': f"{anomaly_score:.4f}",
-                        'pred_class': class_names[pred_idx] if pred_idx < len(class_names) else pred_idx,
+                        'pred_class': pred_class_name,
+                        'is_correct': is_correct,
                         'cam_path': cam_save_path
                     }
                     for idx, s in enumerate(sims):
@@ -189,9 +207,47 @@ def run_inference(args):
         output_file = os.path.join(os.path.dirname(args.head_path), f"inference_{args.class_name}_results.csv")
         df.to_csv(output_file, index=False)
         
-        print(f"\n--- Inference Results for {args.class_name} (Top 10) ---")
+        overall_acc = correct_predictions / total_predictions if total_predictions > 0 else 0.0
+        
+        print("\n" + "="*60)
+        print(f" SYNTHETIC MVTEC EVALUATION SUMMARY FOR '{args.class_name.upper()}' ")
+        print("="*60)
+        print(f"Overall Classification Accuracy: {overall_acc:.4f} ({correct_predictions}/{total_predictions})")
+        print("\nClass-specific Accuracy:")
+        for c in class_names:
+            if class_total.get(c, 0) > 0:
+                c_acc = class_correct[c] / class_total[c]
+                print(f"  - {c:15s}: {c_acc:.4f} ({class_correct[c]}/{class_total[c]})")
+            else:
+                print(f"  - {c:15s}: No samples found in directories")
+        print("="*60)
+        
+        print(f"\n--- Top 10 Predictions by Anomaly Score ---")
         print(df.head(10).drop(columns=['cam_path']).to_string(index=False))
         print(f"\nFull results (including CAM paths) saved to: {output_file}")
+        
+        if args.use_wandb:
+            import wandb
+            from datetime import datetime
+            run_name = args.run_name if args.run_name else f"inference_synthetic_{args.class_name}_{args.backbone}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            wandb.init(project=args.project, name=run_name, config=vars(args))
+            
+            # Log metrics
+            wandb.log({
+                "overall_accuracy": overall_acc,
+                "correct_predictions": correct_predictions,
+                "total_predictions": total_predictions
+            })
+            
+            for c in class_names:
+                if class_total.get(c, 0) > 0:
+                    c_acc = class_correct[c] / class_total[c]
+                    wandb.log({f"accuracy/{c}": c_acc})
+                    
+            # Log dataframe as Table
+            wandb_table = wandb.Table(dataframe=df)
+            wandb.log({"inference_results_table": wandb_table})
+            wandb.finish()
     else:
         print(f"No images found in {target_root} patterns.")
 
@@ -204,6 +260,11 @@ if __name__ == "__main__":
     parser.add_argument('--class_name', type=str, required=True, help='Class name (e.g. bottle)')
     parser.add_argument('--head_layer', type=int, default=2, help="Number of head layers in CutPaste model (default: 2)")
     parser.add_argument('--include_head', action='store_true', help="Include CutPaste projection head (outputs 128-dim features) instead of ResNet18 raw features (512-dim)")
+    
+    # WandB options
+    parser.add_argument('--use_wandb', action='store_true', help='Log results to Weights & Biases')
+    parser.add_argument('--project', type=str, default='IAS-Anomaly-Inference', help='WandB project name')
+    parser.add_argument('--run_name', type=str, default=None, help='WandB run name')
     
     args = parser.parse_args()
     run_inference(args)

@@ -224,6 +224,29 @@ def run_inference(args):
         print(f"\n--- Top 10 Predictions by Anomaly Score ---")
         print(df.head(10).drop(columns=['cam_path']).to_string(index=False))
         print(f"\nFull results (including CAM paths) saved to: {output_file}")
+        
+        if args.use_wandb:
+            import wandb
+            from datetime import datetime
+            run_name = args.run_name if args.run_name else f"inference_real_{args.class_name}_{args.backbone}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            wandb.init(project=args.project, name=run_name, config=vars(args))
+            
+            # Log metrics
+            wandb.log({
+                "overall_accuracy": overall_acc,
+                "correct_predictions": correct_predictions,
+                "total_predictions": total_predictions
+            })
+            
+            for c in class_names:
+                if class_total.get(c, 0) > 0:
+                    c_acc = class_correct[c] / class_total[c]
+                    wandb.log({f"accuracy/{c}": c_acc})
+                    
+            # Log dataframe as Table
+            wandb_table = wandb.Table(dataframe=df)
+            wandb.log({"inference_results_table": wandb_table})
+            wandb.finish()
     else:
         print(f"No images found in {test_root} matching test folders.")
 
@@ -236,6 +259,11 @@ if __name__ == "__main__":
     parser.add_argument('--class_name', type=str, required=True, help='Class name (e.g. bottle)')
     parser.add_argument('--head_layer', type=int, default=2, help="Number of head layers in CutPaste model (default: 2)")
     parser.add_argument('--include_head', action='store_true', help="Include CutPaste projection head (outputs 128-dim features) instead of ResNet18 raw features (512-dim)")
+    
+    # WandB options
+    parser.add_argument('--use_wandb', action='store_true', help='Log results to Weights & Biases')
+    parser.add_argument('--project', type=str, default='IAS-Anomaly-Inference', help='WandB project name')
+    parser.add_argument('--run_name', type=str, default=None, help='WandB run name')
     
     args = parser.parse_args()
     run_inference(args)
