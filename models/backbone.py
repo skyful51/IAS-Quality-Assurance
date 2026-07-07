@@ -38,9 +38,10 @@ class CutPasteBackbone(nn.Module):
     the CutPaste ProjectionNet, returning the representation/embedding
     to be used as the backbone of ArcMarginProduct.
     """
-    def __init__(self, pretrained=True, head_layers=None, include_head=True, checkpoint_path=None):
+    def __init__(self, backbone_name="resnet18", pretrained=True, head_layers=None, include_head=True, checkpoint_path=None):
         super(CutPasteBackbone, self).__init__()
         self.include_head = include_head
+        self.backbone_name = backbone_name
         
         if head_layers is None:
             self.head_layers = [512, 512, 512, 512, 512, 512, 512, 512, 128]
@@ -49,13 +50,22 @@ class CutPasteBackbone(nn.Module):
         else:
             self.head_layers = head_layers
             
-        # Base ResNet18
-        self.resnet18 = models.resnet18(pretrained=pretrained)
+        # Base ResNet
+        if backbone_name == 'resnet18':
+            self.resnet18 = models.resnet18(pretrained=pretrained)
+            in_features = 512
+        elif backbone_name == 'resnet50':
+            self.resnet50 = models.resnet50(pretrained=pretrained)
+            self.resnet18 = self.resnet50  # alias for backward compatibility
+            in_features = 2048
+        else:
+            raise ValueError(f"Unsupported backbone: {backbone_name}")
+            
         self.resnet18.fc = nn.Identity()
         
         if self.include_head:
             # Construct the MLP projection head matching the ProjectionNet definition
-            last_layer = 512
+            last_layer = in_features
             sequential_layers = []
             for num_neurons in self.head_layers:
                 sequential_layers.append(nn.Linear(last_layer, num_neurons))
@@ -66,7 +76,7 @@ class CutPasteBackbone(nn.Module):
             self.head = nn.Sequential(*sequential_layers)
             self.embedding_dim = last_layer
         else:
-            self.embedding_dim = 512
+            self.embedding_dim = in_features
             
         if checkpoint_path is not None:
             self.load_checkpoint(checkpoint_path)

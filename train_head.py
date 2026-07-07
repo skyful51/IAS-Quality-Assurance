@@ -12,6 +12,7 @@ from datetime import datetime
 # Import custom backbone and head from our project models
 from models.backbone import CutPasteBackbone, ResNetBackbone
 from models.heads import ArcMarginProduct
+from data.dataset import MVTecTestDataset
 
 def str2bool(v):
     if isinstance(v, bool):
@@ -22,64 +23,6 @@ def str2bool(v):
         return False
     else:
         raise argparse.ArgumentTypeError('Boolean value expected.')
-
-class MVTecTestDataset(Dataset):
-    """
-    Dataset loader that loads ONLY the test folder of a specific MVTec category.
-    This contains both the 'good' (normal) class and all actual defect classes.
-    """
-    def __init__(self, category_root, transform=None):
-        self.category_root = category_root
-        self.transform = transform
-        
-        self.image_paths = []
-        self.labels = []
-        
-        # 1. Check if 'test' directory exists
-        test_dir = os.path.join(category_root, 'test')
-        if not os.path.exists(test_dir):
-            raise FileNotFoundError(f"Test directory not found at {test_dir}")
-            
-        # 2. Register classes: 'good' is class 0, and defect folders are sorted classes 1, 2, ...
-        self.class_to_idx = {'good': 0}
-        
-        # Add normal images from 'test/good'
-        test_good_dir = os.path.join(test_dir, 'good')
-        self._add_images_from_dir(test_good_dir, 0)
-        
-        # Find all defect directories (excluding 'good')
-        defect_types = sorted([d for d in os.listdir(test_dir) 
-                             if os.path.isdir(os.path.join(test_dir, d)) and d != 'good'])
-        
-        for idx, d_type in enumerate(defect_types):
-            self.class_to_idx[d_type] = idx + 1
-            defect_dir = os.path.join(test_dir, d_type)
-            self._add_images_from_dir(defect_dir, idx + 1)
-            
-        self.idx_to_class = {v: k for k, v in self.class_to_idx.items()}
-        self.classes = [self.idx_to_class[i] for i in range(len(self.class_to_idx))]
-        
-    def _add_images_from_dir(self, directory, label):
-        if not os.path.exists(directory):
-            return
-        for img_name in os.listdir(directory):
-            if img_name.lower().endswith(('.png', '.jpg', '.jpeg')):
-                self.image_paths.append(os.path.join(directory, img_name))
-                self.labels.append(label)
-
-    def __len__(self):
-        return len(self.image_paths)
-
-    def __getitem__(self, idx):
-        img_path = self.image_paths[idx]
-        label = self.labels[idx]
-        
-        image = Image.open(img_path).convert('RGB')
-        
-        if self.transform:
-            image = self.transform(image)
-            
-        return image, label
 
 def run_training_for_class(args, class_data_path, checkpoint_path):
     # Setup Experiment / Log folder
