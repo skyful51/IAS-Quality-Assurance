@@ -224,3 +224,6 @@ datasets/**/*
 *.pth
 logs/
 wandb/
+
+# Cutpste
+pytorch-cutpaste/
