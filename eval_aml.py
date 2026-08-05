@@ -586,13 +586,13 @@ def evaluate_aml_similarity(args):
         if len(probs_list) > 0:
             avg_prob_matrix[c] = np.stack(probs_list).mean(axis=0)
             
-    # 7. Plotting AML Softmax Probability Heatmap
+    # 7. Plotting AML Softmax Probability Heatmap (Sequential Colormap)
     plt.figure(figsize=(10, 8))
     sns.set_theme(style="white")
     ax = sns.heatmap(
         avg_prob_matrix, 
         annot=True, 
-        cmap='coolwarm', 
+        cmap='YlGnBu',          # Sequential colormap: low=light, high=dark
         xticklabels=classes, 
         yticklabels=classes,
         fmt=".2f",
