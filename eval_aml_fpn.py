@@ -460,13 +460,35 @@ def evaluate_aml_fpn_similarity(args):
         if len(probs_list) > 0:
             avg_prob_matrix[c] = np.stack(probs_list).mean(axis=0)
             
-    # 7. Plotting AML FPN Softmax Probability Heatmap (Sequential Colormap)
+    # 7-1. Plotting Pre-Softmax Raw Cosine Similarity Heatmap (Single-hue Blues Colormap)
+    plt.figure(figsize=(10, 8))
+    sns.set_theme(style="white")
+    ax = sns.heatmap(
+        avg_sim_matrix, 
+        annot=True, 
+        cmap='Blues',           # Single-hue sequential colormap: low=light blue, high=dark navy
+        xticklabels=classes, 
+        yticklabels=classes,
+        fmt=".2f",
+        vmin=-0.2, 
+        vmax=1.0
+    )
+    plt.title(f"Raw Cosine Similarity Heatmap (Pre-Softmax - {args.class_name.upper()})", fontsize=14, pad=15)
+    plt.xlabel("AML Class Centroids ($C_j$)", fontsize=12)
+    plt.ylabel("Evaluation Samples ($x_i$)", fontsize=12)
+    plt.tight_layout()
+    raw_heatmap_path = os.path.join(save_dir, "sample_centroid_similarity_heatmap_aml_fpn_raw.png")
+    plt.savefig(raw_heatmap_path, dpi=150)
+    plt.close()
+    print(f"Saved Raw Cosine Similarity heatmap to: {raw_heatmap_path}")
+    
+    # 7-2. Plotting AML FPN Softmax Probability Heatmap (Single-hue Blues Colormap)
     plt.figure(figsize=(10, 8))
     sns.set_theme(style="white")
     ax = sns.heatmap(
         avg_prob_matrix, 
         annot=True, 
-        cmap='YlGnBu',          # Sequential colormap: low=light, high=dark
+        cmap='Blues',           # Single-hue sequential colormap: low=light blue, high=dark navy
         xticklabels=classes, 
         yticklabels=classes,
         fmt=".2f",
@@ -572,7 +594,8 @@ def evaluate_aml_fpn_similarity(args):
     if args.use_wandb:
         import wandb
         wandb.log({
-            "plots/aml_fpn_similarity_heatmap": wandb.Image(heatmap_path),
+            "plots/aml_fpn_raw_cosine_heatmap": wandb.Image(raw_heatmap_path),
+            "plots/aml_fpn_softmax_prob_heatmap": wandb.Image(heatmap_path),
             "plots/aml_fpn_similarity_distribution": wandb.Image(dist_path),
             "plots/aml_fpn_tsne_embeddings": wandb.Image(tsne_path)
         })

@@ -544,6 +544,43 @@ def evaluate_masked_similarity(args):
     plt.close()
     print(f"Saved similarity heatmap to: {heatmap_path}")
     
+    # 6-2. Plotting Masked Softmax Probability Heatmap (YlGnBu Colormap matching eval_aml.py)
+    scaled_logits = eval_sim_vectors * args.s
+    probs_tensor = F.softmax(torch.from_numpy(scaled_logits), dim=1)
+    eval_prob_vectors = probs_tensor.numpy()
+    
+    class_probabilities = {c: [] for c in range(num_classes)}
+    for i in range(len(eval_labels)):
+        c_label = eval_labels[i].item() if isinstance(eval_labels[i], torch.Tensor) else eval_labels[i]
+        class_probabilities[c_label].append(eval_prob_vectors[i])
+        
+    avg_prob_matrix = np.zeros((num_classes, num_classes))
+    for c in range(num_classes):
+        probs_list = class_probabilities[c]
+        if len(probs_list) > 0:
+            avg_prob_matrix[c] = np.stack(probs_list).mean(axis=0)
+            
+    plt.figure(figsize=(10, 8))
+    sns.set_theme(style="white")
+    ax = sns.heatmap(
+        avg_prob_matrix, 
+        annot=True, 
+        cmap='Blues',           # Single-hue sequential colormap: low=light blue, high=dark navy
+        xticklabels=classes, 
+        yticklabels=classes,
+        fmt=".2f",
+        vmin=0.0, 
+        vmax=1.0
+    )
+    plt.title(f"Average Masked Feature Softmax Probability Heatmap ({args.class_name.upper()} - Scaled by s={args.s})", fontsize=14, pad=15)
+    plt.xlabel("Class Centroids ($C_j$)", fontsize=12)
+    plt.ylabel("Evaluation Samples ($x_i$)", fontsize=12)
+    plt.tight_layout()
+    softmax_heatmap_path = os.path.join(save_dir, "sample_centroid_similarity_heatmap_masked_softmax.png")
+    plt.savefig(softmax_heatmap_path, dpi=150)
+    plt.close()
+    print(f"Saved Masked Softmax Probability heatmap to: {softmax_heatmap_path}")
+    
     # 7. Plotting Masked Similarity Distribution (KDE / Histogram)
     plt.figure(figsize=(12, 6))
     
@@ -635,6 +672,7 @@ def evaluate_masked_similarity(args):
         import wandb
         wandb.log({
             "plots/masked_similarity_heatmap": wandb.Image(heatmap_path),
+            "plots/masked_similarity_heatmap_softmax": wandb.Image(softmax_heatmap_path),
             "plots/masked_similarity_distribution": wandb.Image(dist_path),
             "plots/masked_tsne_embeddings": wandb.Image(tsne_path)
         })
@@ -652,6 +690,7 @@ if __name__ == "__main__":
     parser.add_argument('--class_name', type=str, default='all', help="Category name (e.g. bottle) or 'all' to run all categories")
     parser.add_argument('--backbone', type=str, default='resnet18', choices=['resnet18', 'resnet50'], help='ResNet backbone architecture')
     parser.add_argument('--img_size', type=int, default=224, help='Image resolution')
+    parser.add_argument('--s', type=float, default=30.0, help='Scale factor for Softmax probability calculation (default: 30.0)')
     parser.add_argument('--batch_size', type=int, default=16, help='Batch size')
     parser.add_argument('--num_restarts', type=int, default=5, help='Number of random ensemble restarts for normal (good) sample virtual masks')
     parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
