@@ -25,11 +25,12 @@ from eval_aml import MVTecMaskedTestDataset, find_cutpaste_checkpoint, str2bool,
 class MultiScaleFPNBackbone(nn.Module):
     """
     CutPaste Backbone (ResNet18 or ResNet50) + Multi-Scale Feature Extractor
-    Layer-wise L2-Norm Pooling + Learnable Linear Projection (896d -> proj_dim)
+    Layer-wise L2-Norm Pooling + Optional Direct Concatenation (896d) or Learnable Projection (896d -> proj_dim)
     """
-    def __init__(self, cutpaste_backbone, proj_dim=512):
+    def __init__(self, cutpaste_backbone, proj_dim=512, direct_concat=False):
         super().__init__()
         self.cutpaste_backbone = cutpaste_backbone
+        self.direct_concat = direct_concat
         
         if hasattr(cutpaste_backbone, 'resnet18'):
             self.resnet = cutpaste_backbone.resnet18
@@ -46,14 +47,17 @@ class MultiScaleFPNBackbone(nn.Module):
             
         in_dim = c2 + c3 + c4  # 896 for ResNet18, 3584 for ResNet50
         
-        # Learnable Linear Projection block (896d -> 512d)
-        # Replaced BatchNorm1d with LayerNorm to prevent small-batch statistics collapse on small datasets
-        self.proj = nn.Sequential(
-            nn.Linear(in_dim, proj_dim),
-            nn.LayerNorm(proj_dim),
-            nn.ReLU(inplace=True)
-        )
-        self.embedding_dim = proj_dim
+        if self.direct_concat:
+            self.proj = None
+            self.embedding_dim = in_dim
+        else:
+            # Learnable Linear Projection block (896d -> 512d)
+            self.proj = nn.Sequential(
+                nn.Linear(in_dim, proj_dim),
+                nn.LayerNorm(proj_dim),
+                nn.ReLU(inplace=True)
+            )
+            self.embedding_dim = proj_dim
 
     def extract_multiscale_masked_feat(self, images, masks, device):
         images = images.to(device)
@@ -91,7 +95,10 @@ class MultiScaleFPNBackbone(nn.Module):
         # 2. Concatenate Multi-Scale Features (e.g. 128 + 256 + 512 = 896d)
         concat_feat = torch.cat([p2, p3, p4], dim=1) # [B, in_dim]
         
-        # 3. Pass through Learnable Projection Layer & Final L2-Normalization
+        # 3. Direct Concatenation or Pass through Projection Layer
+        if self.direct_concat:
+            return F.normalize(concat_feat, p=2, dim=1) # Direct [B, in_dim]
+            
         out_emb = self.proj(concat_feat)              # [B, proj_dim]
         return F.normalize(out_emb, p=2, dim=1)        # [B, proj_dim]
 
@@ -130,19 +137,25 @@ def verify_model_shapes_proj(multi_scale_model, num_classes, img_size, device):
 
 def fit_aml_head_proj(multi_scale_model, train_loader, num_classes, args, device):
     """
-    Fits the Learnable Linear Projection layer and ArcMarginProduct (AML) head on the 60% train split.
-    Keeps the base ResNet backbone strictly frozen.
+    Fits ArcMarginProduct (AML) head on the 60% train split.
+    Optionally fits Learnable Projection layer if direct_concat is False.
+    Keeps base ResNet backbone strictly frozen.
     """
     emb_dim = multi_scale_model.embedding_dim
     print(f"\nInitializing ArcMarginProduct (AML) Head: in_features={emb_dim}, out_features={num_classes}, s={args.s}, m={args.m}")
     head = ArcMarginProduct(in_features=emb_dim, out_features=num_classes, s=args.s, m=args.m).to(device)
     
     criterion = nn.CrossEntropyLoss()
-    trainable_params = list(head.parameters()) + list(multi_scale_model.proj.parameters())
+    if getattr(multi_scale_model, 'direct_concat', False):
+        trainable_params = list(head.parameters())
+        print(f"Fitting AML Head Only (Direct Concatenation Mode, 896d) for {args.epochs} epochs on 60% train split (Frozen Base ResNet)...")
+    else:
+        trainable_params = list(head.parameters()) + list(multi_scale_model.proj.parameters())
+        print(f"Fitting Projection Layer & AML Head for {args.epochs} epochs on 60% train split (Frozen Base ResNet)...")
+        
     weight_decay = getattr(args, 'weight_decay', 1e-4)
     optimizer = optim.Adam(trainable_params, lr=args.lr, weight_decay=weight_decay)
     
-    print(f"Fitting Projection Layer & AML Head for {args.epochs} epochs on 60% train split (Frozen Base ResNet)...")
     head.train()
     multi_scale_model.train()
     
@@ -176,7 +189,7 @@ def fit_aml_head_proj(multi_scale_model, train_loader, num_classes, args, device
         epoch_acc = correct / total
         
         if (epoch + 1) % 10 == 0 or epoch == args.epochs - 1:
-            print(f"  Epoch [{epoch+1:02d}/{args.epochs:02d}] - AML Projection Train Loss: {epoch_loss:.4f} - AML Projection Train Acc: {epoch_acc * 100:.2f}%")
+            print(f"  Epoch [{epoch+1:02d}/{args.epochs:02d}] - AML Train Loss: {epoch_loss:.4f} - AML Train Acc: {epoch_acc * 100:.2f}%")
             
     head.eval()
     multi_scale_model.eval()
@@ -188,8 +201,10 @@ def fit_aml_head_proj(multi_scale_model, train_loader, num_classes, args, device
 
 
 def evaluate_aml_proj_similarity(args):
+    # Setup output log directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    exp_name = f"{timestamp}_aml_proj_{args.class_name}_{args.backbone}"
+    mode_tag = "aml_direct" if getattr(args, 'direct_concat', False) else "aml_proj"
+    exp_name = f"{timestamp}_{mode_tag}_{args.class_name}_{args.backbone}"
     save_dir = args.save_dir if args.save_dir else os.path.join("logs", exp_name)
     os.makedirs(save_dir, exist_ok=True)
     print(f"Results and plots will be saved in: {save_dir}")
@@ -256,7 +271,13 @@ def evaluate_aml_proj_similarity(args):
         print(f"\nInitializing standard {args.backbone} backbone (ImageNet pre-trained)...")
         cutpaste_base = ResNetBackbone(model_name=args.backbone, pretrained=True)
         
-    multi_scale_model = MultiScaleFPNBackbone(cutpaste_base, proj_dim=args.proj_dim).to(device)
+    # 4. Instantiate MultiScaleFPNBackbone Model
+    print("\nInitializing MultiScaleFPNBackbone...")
+    multi_scale_model = MultiScaleFPNBackbone(
+        cutpaste_base, 
+        proj_dim=args.proj_dim, 
+        direct_concat=args.direct_concat
+    ).to(device)
     
     # Enforce strict freezing on base ResNet parameters
     multi_scale_model.eval()
@@ -268,20 +289,20 @@ def evaluate_aml_proj_similarity(args):
     # 4. Perform Tensor Shape Verification
     verify_model_shapes_proj(multi_scale_model, num_classes, args.img_size, device)
     
-    # 5. AML + Projection Fitting Phase on 60% Train Split
+    # 5. AML Fitting Phase on 60% Train Split
     train_subset = Subset(dataset, train_indices)
     drop_last = (len(train_subset) > args.batch_size)
     train_loader = DataLoader(train_subset, batch_size=args.batch_size, shuffle=True, num_workers=2, drop_last=drop_last)
     
     aml_head, aml_centroids = fit_aml_head_proj(multi_scale_model, train_loader, num_classes, args, device)
     
-    # Save AML + Projection checkpoint
+    # Save AML checkpoint
     head_save_path = os.path.join(save_dir, "aml_linear_projection_fitted.pth")
-    torch.save({
-        'head': aml_head.state_dict(),
-        'proj': multi_scale_model.proj.state_dict()
-    }, head_save_path)
-    print(f"Saved fitted AML Projection checkpoint to: {head_save_path}")
+    save_dict = {'head': aml_head.state_dict()}
+    if multi_scale_model.proj is not None:
+        save_dict['proj'] = multi_scale_model.proj.state_dict()
+    torch.save(save_dict, head_save_path)
+    print(f"Saved fitted AML checkpoint to: {head_save_path}")
     
     # 6. Masked Similarity Evaluation on Unseen 40% Eval Split
     print(f"\nEvaluating Cosine Similarity on unseen 40% eval split with {args.num_restarts} ensemble restarts for good images...")
@@ -455,24 +476,50 @@ def evaluate_aml_proj_similarity(args):
         if len(probs_list) > 0:
             avg_prob_matrix[c] = np.stack(probs_list).mean(axis=0)
             
-    # 7. Plotting AML Softmax Probability Heatmap (Sequential Colormap)
+    title_tag = "AML Direct Concat (896d)" if args.direct_concat else "AML Projection"
+    
+    # 7-1. Plotting Pre-Softmax Raw Cosine Similarity Heatmap (Single-hue Blues Colormap)
+    plt.figure(figsize=(10, 8))
+    sns.set_theme(style="white")
+    ax = sns.heatmap(
+        avg_sim_matrix, 
+        annot=True, 
+        cmap='Blues',           # Single-hue sequential colormap: low=light blue, high=dark navy
+        xticklabels=classes, 
+        yticklabels=classes,
+        fmt=".2f",
+        vmin=-0.2, 
+        vmax=1.0
+    )
+    plt.title(f"Raw Cosine Similarity Heatmap (Pre-Softmax {title_tag} - {args.class_name.upper()})", fontsize=14, pad=15)
+    plt.xlabel("AML Class Centroids ($C_j$)", fontsize=12)
+    plt.ylabel("Evaluation Samples ($x_i$)", fontsize=12)
+    plt.tight_layout()
+    raw_prefix = "sample_centroid_similarity_heatmap_aml_direct_concat_raw.png" if args.direct_concat else "sample_centroid_similarity_heatmap_aml_linear_projection_raw.png"
+    raw_heatmap_path = os.path.join(save_dir, raw_prefix)
+    plt.savefig(raw_heatmap_path, dpi=150)
+    plt.close()
+    print(f"Saved Raw Cosine Similarity heatmap to: {raw_heatmap_path}")
+    
+    # 7-2. Plotting AML Softmax Probability Heatmap (Single-hue Blues Colormap)
     plt.figure(figsize=(10, 8))
     sns.set_theme(style="white")
     ax = sns.heatmap(
         avg_prob_matrix, 
         annot=True, 
-        cmap='YlGnBu',          # Sequential colormap: low=light, high=dark
+        cmap='Blues',           # Single-hue sequential colormap: low=light blue, high=dark navy
         xticklabels=classes, 
         yticklabels=classes,
         fmt=".2f",
         vmin=0.0, 
         vmax=1.0
     )
-    plt.title(f"Average AML Projection Softmax Probability Heatmap (Scaled by s={args.s})", fontsize=14, pad=15)
+    plt.title(f"Average {title_tag} Softmax Probability Heatmap (Scaled by s={args.s})", fontsize=14, pad=15)
     plt.xlabel("AML Class Centroids ($C_j$)", fontsize=12)
     plt.ylabel("Evaluation Samples ($x_i$)", fontsize=12)
     plt.tight_layout()
-    heatmap_path = os.path.join(save_dir, "sample_centroid_similarity_heatmap_aml_linear_projection.png")
+    soft_prefix = "sample_centroid_similarity_heatmap_aml_direct_concat.png" if args.direct_concat else "sample_centroid_similarity_heatmap_aml_linear_projection.png"
+    heatmap_path = os.path.join(save_dir, soft_prefix)
     plt.savefig(heatmap_path, dpi=150)
     plt.close()
     print(f"Saved Softmax Probability heatmap to: {heatmap_path}")
@@ -567,7 +614,8 @@ def evaluate_aml_proj_similarity(args):
     if args.use_wandb:
         import wandb
         wandb.log({
-            "plots/aml_proj_similarity_heatmap": wandb.Image(heatmap_path),
+            "plots/aml_proj_raw_cosine_heatmap": wandb.Image(raw_heatmap_path),
+            "plots/aml_proj_softmax_prob_heatmap": wandb.Image(heatmap_path),
             "plots/aml_proj_similarity_distribution": wandb.Image(dist_path),
             "plots/aml_proj_tsne_embeddings": wandb.Image(tsne_path)
         })
@@ -591,6 +639,7 @@ if __name__ == "__main__":
     parser.add_argument('--class_name', type=str, default='all', help="Category name or 'all'")
     parser.add_argument('--backbone', type=str, default='cutpaste', choices=['cutpaste', 'resnet18', 'resnet50'], help='Backbone architecture')
     parser.add_argument('--proj_dim', type=int, default=512, help='Output dimension for learnable linear projection block (default: 512)')
+    parser.add_argument('--direct_concat', action='store_true', help='Directly concatenate 896d multi-scale features to AML head without 1x1 convs or linear projection')
     parser.add_argument('--freeze_backbone', type=str2bool, default=True, help='Freeze base ResNet backbone parameters (default: True)')
     parser.add_argument('--head_layers', type=int, default=2, help='Number of hidden layers in CutPaste projection head MLP')
     parser.add_argument('--epochs', type=int, default=30, help='Number of epochs to fit AML head & projection layer on 60% train split (default: 30)')
