@@ -15,6 +15,7 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.manifold import TSNE
+from sklearn.metrics import confusion_matrix
 
 # Import custom modules
 from models.backbone import CutPasteBackbone, ResNetBackbone
@@ -524,6 +525,32 @@ def evaluate_aml_proj_similarity(args):
     plt.close()
     print(f"Saved Softmax Probability heatmap to: {heatmap_path}")
     
+    # 7-3. Confusion Matrix Plotting
+    eval_labels_np = eval_labels.numpy() if isinstance(eval_labels, torch.Tensor) else np.array(eval_labels)
+    eval_preds = eval_sim_vectors.argmax(axis=1)
+    cm = confusion_matrix(eval_labels_np, eval_preds, labels=list(range(num_classes)))
+    cm_norm = cm.astype('float') / (cm.sum(axis=1)[:, np.newaxis] + 1e-9)
+
+    plt.figure(figsize=(10, 8))
+    sns.set_theme(style="white")
+    sns.heatmap(
+        cm, 
+        annot=True, 
+        fmt="d", 
+        cmap='Blues', 
+        xticklabels=classes, 
+        yticklabels=classes
+    )
+    plt.title(f"Nearest Centroid Confusion Matrix ({args.class_name.upper()} - AML {title_tag})", fontsize=14, pad=15)
+    plt.xlabel("Predicted Class", fontsize=12)
+    plt.ylabel("True Class", fontsize=12)
+    plt.tight_layout()
+    cm_prefix = "confusion_matrix_aml_direct_concat.png" if args.direct_concat else "confusion_matrix_aml_linear_projection.png"
+    cm_path = os.path.join(save_dir, cm_prefix)
+    plt.savefig(cm_path, dpi=150)
+    plt.close()
+    print(f"Saved Confusion Matrix plot to: {cm_path}")
+
     # 8. Plotting AML Projection Similarity Distribution (KDE)
     plt.figure(figsize=(12, 6))
     
@@ -536,13 +563,13 @@ def evaluate_aml_proj_similarity(args):
         if len(sims_list) == 0:
             continue
         sims_array = np.stack(sims_list)
-        own_sims.extend(sims_array[:, c])
+        own_sims.extend(sims_array[:, c].tolist())
         
         other_cols = [j for j in range(num_classes) if j != c]
-        other_sims.extend(sims_array[:, other_cols].flatten())
+        other_sims.extend(sims_array[:, other_cols].flatten().tolist())
         
         if c > 0:
-            defect_to_good_sims.extend(sims_array[:, 0])
+            defect_to_good_sims.extend(sims_array[:, 0].tolist())
             
     sns.kdeplot(own_sims, fill=True, color="blue", label="Intra-Class (Samples to Own AML Centroid)", bw_adjust=0.5, alpha=0.4)
     sns.kdeplot(other_sims, fill=True, color="red", label="Inter-Class (Samples to Other AML Centroids)", bw_adjust=0.5, alpha=0.4)
@@ -566,6 +593,7 @@ def evaluate_aml_proj_similarity(args):
     print("Generating t-SNE projection of masked embeddings and AML centroids...")
     centroids_cpu_np = aml_centroids.numpy()
     eval_embeddings_np = eval_embeddings.numpy()
+    centroid_sim_matrix = np.dot(centroids_cpu_np, centroids_cpu_np.T)
     
     combined_data = np.concatenate([eval_embeddings_np, centroids_cpu_np], axis=0)
     perp = min(15, len(combined_data) - 1)
@@ -613,12 +641,128 @@ def evaluate_aml_proj_similarity(args):
     
     if args.use_wandb:
         import wandb
-        wandb.log({
+        
+        columns = ["True_Class"] + classes
+        # 1. Similarity Matrix Table
+        sim_table = wandb.Table(
+            data=[[classes[c]] + [float(val) for val in avg_sim_matrix[c]] for c in range(num_classes)],
+            columns=columns
+        )
+
+        # 2. Centroid-to-Centroid Similarity Matrix Table
+        centroid_columns = ["Class"] + classes
+        centroid_sim_table = wandb.Table(
+            data=[[classes[i]] + [float(val) for val in centroid_sim_matrix[i]] for i in range(num_classes)],
+            columns=centroid_columns
+        )
+
+        # 3. Softmax Probability Matrix Table
+        prob_table = wandb.Table(
+            data=[[classes[c]] + [float(val) for val in avg_prob_matrix[c]] for c in range(num_classes)],
+            columns=columns
+        )
+
+        # 4. Confusion Matrix Tables (Raw Counts & Normalized Recall)
+        cm_table = wandb.Table(
+            data=[[classes[i]] + [int(val) for val in cm[i]] for i in range(num_classes)],
+            columns=columns
+        )
+        cm_norm_table = wandb.Table(
+            data=[[classes[i]] + [float(val) for val in cm_norm[i]] for i in range(num_classes)],
+            columns=columns
+        )
+
+        # 5. Distribution Summary Statistics & Table
+        dist_summary_data = []
+        own_sims_np = np.array(own_sims) if len(own_sims) > 0 else np.array([])
+        other_sims_np = np.array(other_sims) if len(other_sims) > 0 else np.array([])
+        defect_sims_np = np.array(defect_to_good_sims) if len(defect_to_good_sims) > 0 else np.array([])
+
+        def get_dist_row(name, arr):
+            if len(arr) == 0:
+                return [name, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+            return [
+                name,
+                int(len(arr)),
+                float(np.mean(arr)),
+                float(np.std(arr)),
+                float(np.min(arr)),
+                float(np.percentile(arr, 25)),
+                float(np.median(arr)),
+                float(np.percentile(arr, 75)),
+                float(np.max(arr))
+            ]
+
+        dist_summary_data.append(get_dist_row("Intra-Class (Own AML Centroid)", own_sims_np))
+        dist_summary_data.append(get_dist_row("Inter-Class (Other AML Centroids)", other_sims_np))
+        if len(defect_sims_np) > 0:
+            dist_summary_data.append(get_dist_row("Defect Samples to Good AML Centroid", defect_sims_np))
+
+        dist_summary_table = wandb.Table(
+            data=dist_summary_data,
+            columns=["Distribution", "Count", "Mean", "Std", "Min", "25%", "Median", "75%", "Max"]
+        )
+
+        # 6. t-SNE 2D Coordinates Table
+        tsne_table_data = []
+        for i in range(len(eval_2d)):
+            lbl = int(eval_labels_np[i])
+            tsne_table_data.append([float(eval_2d[i, 0]), float(eval_2d[i, 1]), lbl, classes[lbl], "Eval Sample"])
+        for c in range(num_classes):
+            tsne_table_data.append([float(centroids_2d[c, 0]), float(centroids_2d[c, 1]), c, classes[c], "Centroid"])
+
+        tsne_coords_table = wandb.Table(
+            data=tsne_table_data,
+            columns=["dim_1", "dim_2", "class_idx", "class_name", "type"]
+        )
+
+        # 7. Sample-level Quantitative Results Table
+        sample_results_table = wandb.Table(dataframe=df_results)
+
+        # 8. Log all Numeric Tables, Metrics, Histograms, and Plots to WandB
+        wandb_log_dict = {
+            # Accuracy Metric
+            "aml_proj_eval/nearest_centroid_acc": float(eval_acc_centroid),
+            # Static Plot Images
             "plots/aml_proj_raw_cosine_heatmap": wandb.Image(raw_heatmap_path),
             "plots/aml_proj_softmax_prob_heatmap": wandb.Image(heatmap_path),
+            "plots/aml_proj_confusion_matrix": wandb.Image(cm_path),
             "plots/aml_proj_similarity_distribution": wandb.Image(dist_path),
-            "plots/aml_proj_tsne_embeddings": wandb.Image(tsne_path)
-        })
+            "plots/aml_proj_tsne_embeddings": wandb.Image(tsne_path),
+            # Interactive Confusion Matrix Plot
+            "plots/aml_proj_interactive_confusion_matrix": wandb.plot.confusion_matrix(
+                preds=eval_preds.tolist(),
+                y_true=eval_labels_np.tolist(),
+                class_names=classes,
+                title=f"Nearest Centroid Confusion Matrix ({args.class_name.upper()} - AML {title_tag})"
+            ),
+            # Numeric Tables
+            "aml_proj_eval/similarity_matrix": sim_table,
+            "aml_proj_eval/centroid_similarity_matrix": centroid_sim_table,
+            "aml_proj_eval/softmax_prob_matrix": prob_table,
+            "aml_proj_eval/confusion_matrix_table": cm_table,
+            "aml_proj_eval/confusion_matrix_normalized": cm_norm_table,
+            "aml_proj_eval/distribution_summary_table": dist_summary_table,
+            "aml_proj_eval/tsne_coordinates": tsne_coords_table,
+            "aml_proj_eval/sample_similarity_results": sample_results_table,
+            # Histograms for Numeric Distribution
+            "aml_proj_eval/intra_sim_distribution": wandb.Histogram(own_sims_np),
+            "aml_proj_eval/inter_sim_distribution": wandb.Histogram(other_sims_np),
+            # Overall Distribution Scalars
+            "aml_proj_eval/overall_intra_sim_mean": float(np.mean(own_sims_np)) if len(own_sims_np) > 0 else 0.0,
+            "aml_proj_eval/overall_intra_sim_std": float(np.std(own_sims_np)) if len(own_sims_np) > 0 else 0.0,
+            "aml_proj_eval/overall_intra_sim_median": float(np.median(own_sims_np)) if len(own_sims_np) > 0 else 0.0,
+            "aml_proj_eval/overall_inter_sim_mean": float(np.mean(other_sims_np)) if len(other_sims_np) > 0 else 0.0,
+            "aml_proj_eval/overall_inter_sim_std": float(np.std(other_sims_np)) if len(other_sims_np) > 0 else 0.0,
+            "aml_proj_eval/overall_inter_sim_median": float(np.median(other_sims_np)) if len(other_sims_np) > 0 else 0.0
+        }
+        if len(defect_sims_np) > 0:
+            wandb_log_dict["aml_proj_eval/defect_to_good_sim_distribution"] = wandb.Histogram(defect_sims_np)
+            wandb_log_dict["aml_proj_eval/overall_defect_to_good_sim_mean"] = float(np.mean(defect_sims_np))
+            wandb_log_dict["aml_proj_eval/overall_defect_to_good_sim_std"] = float(np.std(defect_sims_np))
+            wandb_log_dict["aml_proj_eval/overall_defect_to_good_sim_median"] = float(np.median(defect_sims_np))
+
+        wandb.log(wandb_log_dict)
         wandb.finish()
         
     print("\n" + "="*80)
