@@ -138,7 +138,23 @@ class SyntheticAnomalyDataset(Dataset):
         if not os.path.exists(syn_cat_dir):
             return
             
-        subdirs = sorted([d for d in os.listdir(syn_cat_dir) if os.path.isdir(os.path.join(syn_cat_dir, d))])
+        # 1. Direct structure: syn_cat_dir/image and syn_cat_dir/mask
+        direct_img_dir = os.path.join(syn_cat_dir, 'image')
+        direct_mask_dir = os.path.join(syn_cat_dir, 'mask')
+        if os.path.exists(direct_img_dir):
+            for fname in sorted(os.listdir(direct_img_dir)):
+                if fname.lower().endswith(('.png', '.jpg', '.jpeg')):
+                    img_path = os.path.join(direct_img_dir, fname)
+                    mask_path = os.path.join(direct_mask_dir, fname) if os.path.exists(direct_mask_dir) else None
+                    if mask_path and os.path.exists(mask_path):
+                        self.image_paths.append(img_path)
+                        self.mask_paths.append(mask_path)
+                        self.labels.append(1)
+                        self.defect_types.append("anomaly")
+                        self.file_names.append(fname)
+
+        # 2. Subfolder structures: syn_cat_dir/combined/image or syn_cat_dir/<defect_type>/image
+        subdirs = sorted([d for d in os.listdir(syn_cat_dir) if os.path.isdir(os.path.join(syn_cat_dir, d)) and d not in ['image', 'mask']])
         
         for d_type in subdirs:
             class_idx = class_to_idx.get(d_type, -1)
@@ -344,7 +360,7 @@ def main():
     parser.add_argument("--mvtec_root", type=str, default="datasets/mvtec")
     parser.add_argument("--syn_root", type=str, default="datasets/generated_dataset")
     parser.add_argument("--weights_dir", type=str, default="logs/resnet18_baseline_0819")
-    parser.add_argument("--algorithms", nargs="+", default=["realnet_paired", "anomaly_diffusion"])
+    parser.add_argument("--algorithms", nargs="+", default=["realnet_paired", "anomaly_diffusion", "cutpaste"])
     parser.add_argument("--categories", nargs="+", default=["all"])
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--output_csv", type=str, default="mask_similarity_benchmark_results.csv")
